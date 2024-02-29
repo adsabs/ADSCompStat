@@ -69,6 +69,14 @@ def get_arguments():
         default=False,
         help="Export completeness summary to JSON file",
     )
+    parser.add_argument(
+        "-r",
+        "--retry",
+        dest="do_retry",
+        action="store_true",
+        default=False,
+        help="Retry all mismatched and unmatched records",
+    )
 
     args = parser.parse_args()
     return args
@@ -81,29 +89,28 @@ def get_logs(args):
         (dates, pubdois) = utils.parse_pub_and_date_from_logs(logfiles)
         if args.do_pub:
             if args.do_pub in pubdois:
+                newlogs = list()
                 try:
-                    newlogs = list()
                     for logfile in logfiles:
                         if args.do_pub in logfile:
                             newlogs.append(logfile)
-                    logfiles = newlogs
                 except Exception as err:
                     raise GetLogException(
                         "Problem selecting publisher (%s): %s" % (args.do_pub, err)
                     )
+                logfiles = newlogs
             else:
                 raise GetLogException("No log files available for publisher %s" % args.do_pub)
         if args.do_latest:
             latestDate = dates[-1]
+            newlogs = list()
             try:
-                newlogs = list()
                 for logfile in logfiles:
                     if latestDate in logfile:
                         newlogs.append(logfile)
-                logfiles = newlogs
             except Exception as err:
                 raise GetLogException("Problem selecting most recent (%s): %s" % (latestDate, err))
-        # elif args.do_since:
+            logfiles = newlogs
     return logfiles
 
 
@@ -114,7 +121,9 @@ def write_to_database(table_def, data):
         if data and table_def:
             i = 0
             while i < total_rows:
-                logger.info("Writing to db: %s of %s rows remaining" % (len(data) - i, total_rows))
+                logger.debug(
+                    "Writing to db: %s of %s rows remaining" % (len(data) - i, total_rows)
+                )
                 insertblock = data[i : (i + blocksize)]
                 tasks.task_write_block_to_db(table_def, insertblock)
                 i += blocksize
@@ -177,6 +186,9 @@ def main():
             tasks.task_do_all_completeness()
         elif args.do_json_export:
             tasks.task_export_completeness_to_json()
+        elif args.do_retry:
+            for result_type in ["mismatch", "unmatched", "failed"]:
+                tasks.task_retry_records.delay(result_type)
         else:
             logfiles = get_logs(args)
             if not logfiles:

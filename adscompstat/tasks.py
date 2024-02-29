@@ -1,4 +1,5 @@
 import json
+import math
 import os
 
 from adsenrich.bibcodes import BibcodeGenerator
@@ -26,10 +27,22 @@ logger = app.logger
 
 app.conf.CELERY_QUEUES = (
     Queue("write-db", app.exchange, routing_key="write-db"),
-    Queue("get-logfiles", app.exchange, routing_key="get-logfiles"),
+    Queue("get_logfiles", app.exchange, routing_key="get_logfiles"),
     Queue("process-meta", app.exchange, routing_key="process-meta"),
     Queue("compute-stats", app.exchange, routing_key="compute-stats"),
 )
+
+related_bibstems = []
+related_bibs_file = app.conf.get("JOURNALSDB_RELATED_BIBSTEMS", None)
+if related_bibs_file:
+    try:
+        with open(related_bibs_file, "r") as fj:
+            data = json.load(fj)
+            related_bibstems = data.get("related_bibstems", [])
+    except Exception as err:
+        logger.warning("Unable to load related bibstems list: %s" % err)
+else:
+    logger.warning("Related bibstems filename not set.")
 
 
 # No delay/queue, synchronous only
@@ -103,7 +116,7 @@ def task_write_matched_record_to_db(record):
             logger.warning("DB write error: %s; Record: %s" % (err, record))
 
 
-@app.task(queue="get-logfiles")
+@app.task(queue="get_logfiles")
 def task_process_logfile(infile):
     """
     Parse one oaipmh harvesting logfile to retrieve newly downloaded records,
@@ -140,7 +153,7 @@ def db_query_bibstem(record):
             bibstem = ""
             for issn in issn_list:
                 if not bibstem:
-                    issnString = issn.get("issnString", "")
+                    issnString = str(issn.get("issnString", ""))
                     if issnString:
                         if len(issnString) == 8:
                             issnString = issnString[0:4] + "-" + issnString[4:]
@@ -264,7 +277,7 @@ def task_process_meta(infile_batch):
                         (bibcodesFromDoi, bibcodesFromBib) = db_query_classic_bibcodes(
                             doi, bibcode
                         )
-                        xmatch = CrossrefMatcher()
+                        xmatch = CrossrefMatcher(related_bibstems=related_bibstems)
                         xmatchResult = xmatch.match(bibcode, bibcodesFromDoi, bibcodesFromBib)
                         if xmatchResult:
                             matchtype = xmatchResult.get("match", "")
@@ -339,9 +352,8 @@ def task_process_meta(infile_batch):
 
 @app.task(queue="compute-stats")
 def task_completeness_per_bibstem(bibstem):
-    if len(bibstem) < 5:
-        bibstem = bibstem.ljust(5, ".")
     try:
+        bibstem = bibstem.ljust(5, ".")
         with app.session_scope() as session:
             result = (
                 session.query(
@@ -436,14 +448,19 @@ def task_export_completeness_to_json():
                 paperCount = 0
                 averageCompleteness = 0.0
                 for r in result:
-                    completeness.append({"volume": r[1], "completeness": r[2]})
+                    if type(r[2]) == float:
+                        r2_export = math.floor(10000 * r[2] + 0.5) / 10000.0
+                    else:
+                        r2_export = r[2]
+                    completeness.append({"volume": r[1], "completeness_fraction": r2_export})
                     paperCount += r[3]
                     averageCompleteness += r[3] * r[2]
                 averageCompleteness = averageCompleteness / paperCount
+                avg_export = math.floor(10000 * averageCompleteness + 0.5) / 10000.0
                 allData.append(
                     {
                         "bibstem": bib,
-                        "completeness_fraction": averageCompleteness,
+                        "completeness_fraction": avg_export,
                         "completeness_details": completeness,
                     }
                 )
@@ -453,3 +470,25 @@ def task_export_completeness_to_json():
                 )
         except Exception as err:
             logger.error("Unable to export completeness data to disk: %s" % err)
+
+
+@app.task(queue="get_logfiles")
+def task_retry_records(rec_type):
+    with app.session_scope() as session:
+        batch_count = app.conf.get("RECORDS_PER_BATCH", 100)
+        try:
+            result = (
+                session.query(master.harvest_filepath).filter(master.matchtype == rec_type).all()
+            )
+            batch = []
+            for r in result:
+                batch.append(r[0])
+                if len(batch) == batch_count:
+                    logger.debug("Calling task_process_meta with batch '%s'" % batch)
+                    task_process_meta.delay(batch)
+                    batch = []
+            if len(batch):
+                logger.debug("Calling task_process_meta with batch '%s'" % batch)
+                task_process_meta.delay(batch)
+        except Exception as err:
+            logger.warning('Error reprocessing records of matchtype "%s": %s' % (rec_type, err))
