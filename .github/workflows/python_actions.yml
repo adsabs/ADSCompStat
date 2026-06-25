@@ -2,36 +2,10 @@ name: Python CI actions
 
 on: [push, pull_request]
 
-env:
-  PGDATABASE: compstat_testing
-  PGPASSWORD: postgres
-  PGUSER: postgres
-  PGHOST: localhost
-  PGPORT: 5432
-
 jobs:
   build:
 
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:14.0
-        env:
-          POSTGRES_DB: compstat_testing
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-
-        ports:
-          - 5432:5432
-        # Set health checks to wait until postgres has started
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
     - uses: actions/checkout@v3
