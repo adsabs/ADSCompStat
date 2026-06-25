@@ -1,6 +1,6 @@
 name: Python CI actions
 
-on: [pull_request]
+on: [push, pull_request]
 
 env:
   PGDATABASE: compstat_testing
