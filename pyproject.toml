@@ -19,6 +19,7 @@ packages = [
 ]
 
 dependencies = [
+    'pip<24.1',
     'click>=8.0.3',
     'adsputils==1.5.2',
     'psycopg2-binary==2.9.3',
@@ -36,7 +37,7 @@ Documentation = "https://adscompstat.readthedocs.io"
 
 [project.optional-dependencies]
 dev = [
-    'pip<24.1'
+    'pip<24.1',
     'black==23.1.0',
     'flake8==5.0.4',
     'isort==5.12.0',
