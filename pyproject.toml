@@ -36,6 +36,7 @@ Documentation = "https://adscompstat.readthedocs.io"
 
 [project.optional-dependencies]
 dev = [
+    'pip<24.1'
     'black==23.1.0',
     'flake8==5.0.4',
     'isort==5.12.0',
